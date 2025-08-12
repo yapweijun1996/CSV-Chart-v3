@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>CSV → Aggregates + Cards + Data Table (Auto + Manual + More Charts)</title>
+
+<!-- Chart.js v4 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<!-- PapaParse -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+  :root{
+    --bg:#0b0f14;--panel:#0f1622;--panel2:#0f1825;--ink:#e8eef7;
+    --muted:#94a3b8;--border:#1e293b;--accent:#22d3ee;
+    --radius:14px;--shadow:0 10px 28px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Arial}
+  .wrap{max-width:1200px;margin:28px auto;padding:0 16px}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input,button,select{
+    background:#0c1520;color:var(--ink);border:1px solid var(--border);border-radius:10px;padding:8px 10px
+  }
+  button{cursor:pointer}
+  .muted{color:var(--muted)}
+  .tag{background:#0d2433;border:1px solid #1e3a5f;padding:2px 8px;border-radius:999px}
+  .section{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin:12px 0}
+  .grid{display:grid;gap:14px;grid-template-columns:1fr 1fr}
+  @media (max-width:1000px){.grid{grid-template-columns:1fr}}
+
+  /* Aggregate card */
+  .card{background:var(--panel2);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column;min-height:0}
+  .card-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
+  .card-title{margin:0;font-size:15px}
+  .card-sub{font-size:12px;color:var(--muted)}
+  .card-controls{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border)}
+  .chart-cards{display:grid;grid-template-columns:1fr;gap:10px;padding:10px 14px}
+  .chart-card{border:1px solid var(--border);border-radius:12px;padding:8px;background:#0e1520}
+  .chart-head{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:6px}
+
+  /* FIXED CHART HEIGHT */
+  .chart-box{height:260px; position:relative}
+  .chart-box canvas{
+    display:block;
+    width:100% !important;
+    height:100% !important;
+  }
+
+  .table-wrap{padding:12px 14px}
+  table{width:100%;border-collapse:collapse;background:#0e1520}
+  th,td{border-bottom:1px solid var(--border);padding:6px 8px;white-space:nowrap}
+  th{position:sticky;top:0;background:#0f1a2a;cursor:pointer}
+  th .sort{opacity:.7;margin-left:6px}
+  tfoot td{font-weight:600;background:#0f1a2a;position:sticky;bottom:0}
+  .card-foot{display:flex;gap:8px;flex-wrap:wrap;padding:12px 14px;border-top:1px solid var(--border)}
+  .small{font-size:12px}
+
+  /* Raw data table controls */
+  .table-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 10px}
+  .pager{display:flex;gap:6px;align-items:center}
+  .pager button{padding:6px 10px}
+  .count{color:var(--muted)}
+  .data-table-wrap{border:1px solid var(--border);border-radius:12px;overflow:auto;max-height:520px}
+  .sticky{position:sticky;top:0;background:#0f1a2a;z-index:1}
+
+  /* Modal */
+  .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:50}
+  .modal.open{display:flex}
+  .modal-card{width:min(960px,92vw);max-height:86vh;overflow:auto;background:#0f1622;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:14px}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .modal-head h3{margin:0}
+  .role-table{width:100%;border-collapse:collapse}
+  .role-table th,.role-table td{border-bottom:1px solid var(--border);padding:6px 8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="section">
+    <h2 style="margin:2px 0 10px">CSV → Aggregates (Card UI) + Raw Data Table</h2>
+    <div class="bar">
+      <input id="file" type="file" accept=".csv,.txt" />
+      <button id="loadBtn">Load CSV</button>
+      <span id="meta" class="muted"></span>
+    </div>
+    <div class="bar" style="margin-top:8px">
+      <label>Delimiter:
+        <select id="delimiter">
+          <option value="auto">Auto</option>
+          <option value=",">Comma (,)</option>
+          <option value=";">Semicolon (;)</option>
+          <option value="\\t">Tab (\\t)</option>
+          <option value="|">Pipe (|)</option>
+        </select>
+      </label>
+      <label><input id="hasHeader" type="checkbox" checked /> First row has headers</label>
+
+      <label class="tag">
+        Mode:
+        <select id="mode">
+          <option value="auto" selected>Auto</option>
+          <option value="manual">Manual</option>
+        </select>
+      </label>
+      <button id="editRolesBtn" style="display:none">Edit column roles</button>
+      <button id="addAggBtn" style="display:none">Add aggregate</button>
+      <button id="clearManualBtn" style="display:none">Clear manual</button>
+
+      <button id="autoBtn">Generate Cards</button>
+      <span class="tag">Up to 10 aggregates</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin:2px 0 10px">Schema / Parser Info</h3>
+    <pre id="schema" class="muted" style="white-space:pre-wrap;margin:0"></pre>
+  </div>
+
+  <div class="section">
+    <h3 style="margin:2px 0 10px">Raw Data</h3>
+    <div class="table-controls">
+      <label>Search: <input id="searchInput" type="text" placeholder="type to filter across all columns" style="min-width:260px"></label>
+      <label>Rows per page:
+        <select id="rowsPerPage">
+          <option>10</option>
+          <option selected>25</option>
+          <option>50</option>
+          <option>100</option>
+        </select>
+      </label>
+      <div class="pager">
+        <button id="prevPage">Prev</button>
+        <span class="count" id="pageInfo">Page 1 / 1</span>
+        <button id="nextPage">Next</button>
+      </div>
+      <span class="count" id="rowInfo">Showing 0–0 of 0</span>
+      <button id="downloadFiltered">Download filtered CSV</button>
+    </div>
+    <div class="data-table-wrap">
+      <table id="dataTable">
+        <thead id="dataThead"></thead>
+        <tbody id="dataTbody"></tbody>
+        <tfoot id="dataTFoot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin:2px 0 10px">Aggregates</h3>
+    <div id="results" class="grid"></div>
+  </div>
+</div>
+
+<!-- Role Editor Modal -->
+<div id="roleModal" class="modal" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>Column Roles</h3>
+      <button id="closeRoleModal">Close</button>
+    </div>
+    <table class="role-table">
+      <thead><tr><th>Column</th><th>Detected Type</th><th>Unique</th><th>Role</th><th>Sample</th></tr></thead>
+      <tbody id="roleTBody"></tbody>
+    </table>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="saveRoles">Save roles</button>
+      <span class="muted small">Roles: <b>dimension</b> (group by), <b>metric</b> (numeric measure), <b>date</b>, <b>id</b> (skip in sums), <b>ignore</b></span>
+    </div>
+  </div>
+</div>
+
+<!-- Add Aggregate Modal -->
+<div id="aggModal" class="modal" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>Add Aggregate</h3>
+      <button id="closeAggModal">Close</button>
+    </div>
+    <div class="bar">
+      <label>Group by:
+        <select id="aggGroupBy"></select>
+      </label>
+      <label>Date bucket:
+        <select id="aggBucket">
+          <option value="">(none)</option>
+          <option value="day">day</option>
+          <option value="week">week</option>
+          <option value="month">month</option>
+          <option value="quarter">quarter</option>
+          <option value="year">year</option>
+        </select>
+      </label>
+      <label>Metric:
+        <select id="aggMetric"></select>
+      </label>
+      <label>Function:
+        <select id="aggFunc">
+          <option value="sum">sum</option>
+          <option value="avg">avg</option>
+          <option value="min">min</option>
+          <option value="max">max</option>
+          <option value="count">count</option>
+          <option value="distinct_count">distinct_count</option>
+        </select>
+      </label>
+    </div>
+    <div class="bar" style="margin-top:8px">
+      <label>Chart:
+        <select id="aggChart">
+          <option value="auto">Auto</option>
+          <option value="bar">Bar (vertical)</option>
+          <option value="hbar">Bar (horizontal)</option>
+          <option value="line">Line</option>
+          <option value="area">Area</option>
+          <option value="pie">Pie</option>
+          <option value="doughnut">Doughnut</option>
+          <option value="polarArea">Polar Area</option>
+          <option value="radar">Radar</option>
+        </select>
+      </label>
+      <label>Top-N:
+        <input id="aggTopN" type="number" min="3" max="999" value="20" style="width:90px" />
+      </label>
+      <button id="addAggConfirm">Add</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ========= utils ========= */
+const $ = s => document.querySelector(s);
+const stripBOM = s => (s && s.charCodeAt(0) === 0xFEFF) ? s.slice(1) : s;
+// treat %, commas and spaces as formatting
+const isNum = v => { const n = Number(String(v).replace(/[,%\s]/g,'')); return !Number.isNaN(n) && isFinite(n); };
+const toNum = v => { const n = Number(String(v).replace(/[,%\s]/g,'')); return isFinite(n)? n : NaN; };
+const nice = n => { if (n==null || isNaN(n)) return ''; const a=Math.abs(n);
+  if (a>=1e9) return (n/1e9).toFixed(1)+'B';
+  if (a>=1e6) return (n/1e6).toFixed(1)+'M';
+  if (a>=1e3) return (n/1e3).toFixed(1)+'K';
+  return String(Number((+n).toFixed(2)));
+};
+function debounce(fn, ms=250){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); }; }
+
+/* ========= state ========= */
+let ROWS=null, PROFILE=null, LAST_PARSE_META=null;
+let DATA_COLUMNS=[], FILTERED_ROWS=[], PAGE=1, RPP=25, QUERY="";
+let SORT = { col:null, dir:'asc' };
+
+let MODE = 'auto';
+let MANUAL_ROLES = {};   // { colName: 'dimension'|'metric'|'date'|'id'|'ignore' }
+let MANUAL_JOBS  = [];   // [{groupBy, metric, agg, chart, topN, dateBucket?}]
+
+/* ========= parsing with smart delimiter ========= */
+async function sniffText(file, bytes=256*1024){
+  const blob = await file.slice(0, bytes).text(); return stripBOM(blob || '');
+}
+function tryParsePreview(text, opt){
+  return Papa.parse(text, {
+    header: !!opt.header, preview: 25, skipEmptyLines: 'greedy',
+    delimiter: opt.delimiter ?? "", quoteChar: '"', escapeChar: '"'
+  });
+}
+function scorePreview(res){
+  const rows = res.data || [];
+  const lens = rows.map(r => Array.isArray(r) ? r.length : (typeof r==='object' ? Object.keys(r).length : 0));
+  const modal = lens.length ? mode(lens) : 0;
+  const err = (res.errors || []).length;
+  return { modalCols: modal, errors: err };
+}
+function mode(arr){ const m=new Map(); let best=0, v=0; for(const x of arr){const c=(m.get(x)||0)+1; m.set(x,c); if(c>best){best=c; v=x}} return v; }
+async function autoDetect(file, header=true){
+  const text = await sniffText(file);
+  const candidates = [",",";","\t","|"];
+  let best = { delimiter:",", score:{modalCols:0, errors:Infinity} };
+  for (const d of candidates){
+    const res = tryParsePreview(text, { delimiter:d, header });
+    const s = scorePreview(res);
+    const better = (s.modalCols > best.score.modalCols) || (s.modalCols===best.score.modalCols && s.errors < best.score.errors);
+    if (better) best = { delimiter:d, score:s };
+  }
+  return best;
+}
+async function parseCSV(file, delimiterChoice, header=true){
+  let delimiter = ",";
+  if (delimiterChoice === 'auto'){
+    const autod = await autoDetect(file, header);
+    delimiter = autod.delimiter;
+  } else {
+    delimiter = (delimiterChoice === '\\t') ? '\t' : delimiterChoice;
+  }
+  return new Promise((resolve,reject)=>{
+    Papa.parse(file, {
+      header, skipEmptyLines:'greedy', dynamicTyping:false,
+      delimiter, quoteChar:'"', escapeChar:'"',
+      transformHeader: h => stripBOM(String(h||'').trim()),
+      transform: v => typeof v === 'string' ? stripBOM(v) : v,
+      complete: r => { LAST_PARSE_META=r.meta; resolve({ data:r.data, meta:r.meta, errors:r.errors||[] }); },
+      error: err => reject(err)
+    });
+  });
+}
+
+/* ========= profiling ========= */
+function inferType(v){
+  if (v==null || v==='') return 'empty';
+  if (isNum(v)) return 'number';
+  const d = new Date(v); if (!Number.isNaN(+d)) return 'date';
+  return 'string';
+}
+function profile(rows){
+  const cols = Object.keys(rows[0]||{});
+  const sample = rows.slice(0, Math.min(500, rows.length));
+  const out = cols.map(name=>{
+    const vals = sample.map(r=>r[name]);
+    const counts = {number:0,date:0,string:0};
+    for (const v of vals){ const t=inferType(v); counts[t]=(counts[t]||0)+1; }
+    const type = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    const uniq = new Set(vals.filter(x=>x!=null&&x!=='').map(String)).size;
+    const samples = vals.filter(x=>x!=null&&x!=='').slice(0,3).map(String);
+    return { name, type, unique: uniq, samples };
+  });
+  return { columns: out, rowCount: rows.length };
+}
+function renderProfile(p){
+  const lines = p.columns.map(c=>`${c.name} — ${c.type} · unique=${c.unique} · samples=[${c.samples.join(', ')}]`);
+  const meta = LAST_PARSE_META ? `\nmeta: delimiter="${LAST_PARSE_META.delimiter}" linebreak="${LAST_PARSE_META.linebreak}"` : '';
+  $('#schema').textContent = `rows=${p.rowCount}\n` + lines.join('\n') + meta;
+}
+
+/* ========= raw data table: header, sorting, filter, pagination, tfoot sums ========= */
+function isLikelyCodeColumn(name){
+  return /(code|id|sku|account|acct|phone|tel|zip|postal|nr|no|number)$/i.test(String(name).trim());
+}
+function columnType(name){
+  const c = PROFILE?.columns?.find(x=>x.name===name);
+  return c ? c.type : 'string';
+}
+function buildRawHeader(columns){
+  const thead = $('#dataThead'); thead.innerHTML='';
+  const tr = document.createElement('tr');
+  columns.forEach(col=>{
+    const th=document.createElement('th'); th.className='sticky'; th.textContent=col;
+    const s = document.createElement('span'); s.className='sort'; s.textContent='';
+    th.appendChild(s);
+    th.addEventListener('click', ()=>{
+      if (SORT.col===col){ SORT.dir = (SORT.dir==='asc'?'desc':'asc'); }
+      else { SORT.col=col; SORT.dir='asc'; }
+      renderSortIndicators(); renderRawBody();
+    });
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+  renderSortIndicators();
+}
+function renderSortIndicators(){
+  const ths = Array.from($('#dataThead').querySelectorAll('th'));
+  ths.forEach(th=>{
+    const col = th.firstChild?.nodeValue || th.childNodes[0]?.textContent || '';
+    const span = th.querySelector('.sort');
+    if (!span) return;
+    if (SORT.col===col) span.textContent = SORT.dir==='asc' ? '↑' : '↓';
+    else span.textContent = '';
+  });
+}
+function applyFilter(){
+  const q = QUERY.trim().toLowerCase();
+  if (!q){ FILTERED_ROWS = ROWS; return; }
+  FILTERED_ROWS = ROWS.filter(row=>{
+    for (const c of DATA_COLUMNS){
+      const v = row[c];
+      if (v!=null && String(v).toLowerCase().includes(q)) return true;
+    }
+    return false;
+  });
+}
+function sortRows(rows){
+  if (!SORT.col) return rows;
+  const name = SORT.col;
+  const t = columnType(name);
+  const dir = SORT.dir==='asc' ? 1 : -1;
+  const cmp = (a,b)=>{
+    const av = a[name], bv = b[name];
+    if (t==='number'){
+      const an = toNum(av), bn = toNum(bv);
+      if (isNaN(an) && isNaN(bn)) return 0;
+      if (isNaN(an)) return -dir;
+      if (isNaN(bn)) return dir;
+      return an < bn ? -dir : an > bn ? dir : 0;
+    } else if (t==='date'){
+      const ad = new Date(av), bd = new Date(bv);
+      const an = +ad, bn = +bd;
+      if (isNaN(an) && isNaN(bn)) return 0;
+      if (isNaN(an)) return -dir;
+      if (isNaN(bn)) return dir;
+      return an < bn ? -dir : an > bn ? dir : 0;
+    } else {
+      const as = (av==null?'':String(av)).toLowerCase();
+      const bs = (bv==null?'':String(bv)).toLowerCase();
+      return as < bs ? -dir : as > bs ? dir : 0;
+    }
+  };
+  const copy = rows.slice();
+  copy.sort(cmp);
+  return copy;
+}
+function renderTFootSums(){
+  const tfoot = $('#dataTFoot'); tfoot.innerHTML='';
+  if (!FILTERED_ROWS?.length){ return; }
+  const tr = document.createElement('tr');
+
+  DATA_COLUMNS.forEach(col=>{
+    const td = document.createElement('td');
+    const t = columnType(col);
+    if (t==='number' && !isLikelyCodeColumn(col)){
+      let sum = 0;
+      for (const r of FILTERED_ROWS){
+        const n = toNum(r[col]); if (!isNaN(n)) sum += n;
+      }
+      td.textContent = 'Σ ' + nice(sum);
+    } else {
+      td.textContent = '';
+    }
+    tr.appendChild(td);
+  });
+
+  tfoot.appendChild(tr);
+}
+function renderRawBody(){
+  const tbody = $('#dataTbody'); tbody.innerHTML='';
+  const total = FILTERED_ROWS.length, pages = Math.max(1, Math.ceil(total / RPP));
+  PAGE = Math.min(PAGE, pages);
+
+  const sorted = sortRows(FILTERED_ROWS);
+  const start = (PAGE-1)*RPP, end = Math.min(start+RPP, total);
+  for (let i=start;i<end;i++){
+    const r = sorted[i];
+    const tr = document.createElement('tr');
+    DATA_COLUMNS.forEach(c=>{
+      const td = document.createElement('td');
+      let v = r[c];
+      td.textContent = (v==null? '' : String(v));
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  $('#pageInfo').textContent = `Page ${PAGE} / ${pages}`;
+  $('#rowInfo').textContent = `Showing ${total? start+1:0}–${end} of ${total}${(ROWS && ROWS.length!==total) ? ` (filtered from ${ROWS.length})` : ''}`;
+  $('#prevPage').disabled = PAGE<=1;
+  $('#nextPage').disabled = PAGE>=pages;
+
+  renderTFootSums();
+}
+const onSearch = debounce(()=>{ QUERY = $('#searchInput').value; PAGE=1; applyFilter(); renderRawBody(); }, 200);
+
+/* ========= roles + auto plan (no-AI) ========= */
+/* FIX: Strong name-first rules so numeric PRICE/AMOUNT/QTY are never misclassified as ID even if uniqueness is high */
+const NAME_PATTERNS = {
+  metric: /(amount|total|qty|quantity|price|unit[_\s-]*price|revenue|sales|cost|profit|margin|rate|percent|%|tax|fee|金额|总额|数量|单价|价格|费|税)/i,
+  code: /(code|id|sku|account|acct|编号|编码|货号|料号|单号|订单号|客户号|编号$|代码$|no\.?$|number$)/i,
+  date: /(date|time|day|month|quarter|year|日期|时间|月份|季度|年份)/i
+};
+
+function inferRole(col, profile, rows) {
+  const name = col.name || '';
+  const type = col.type;
+  const uniq = col.unique || 0;
+  const rowCount = profile.rowCount || Math.max(1, rows.length);
+  const uniqRatio = rowCount ? uniq / rowCount : 0;
+
+  const isCodeByName = NAME_PATTERNS.code.test(name);
+  const isDateByName = NAME_PATTERNS.date.test(name);
+  const isMetricByName = NAME_PATTERNS.metric.test(name);
+
+  // Dates by name or type
+  if (type === 'date' || isDateByName) return { role: 'date' };
+
+  if (type === 'number') {
+    // FIX: name hint "metric" wins FIRST
+    if (isMetricByName) return { role: 'metric:strong' };
+    // codes next
+    if (isCodeByName) return { role: 'id' };
+    // otherwise numeric → metric (even if unique)
+    return { role: 'metric' };
+  }
+
+  if (type === 'string') {
+    if (isCodeByName) return { role: 'id' };
+    // Strings that look like metrics (rare) still treated as dimension
+    // High-uniqueness strings → likely ids, but use higher threshold to avoid misclassifying names
+    if (uniqRatio > 0.95) return { role: 'id' };
+    return { role: 'dimension' };
+  }
+
+  return { role: 'ignore' };
+}
+
+function pickPrimaryMetric(profile, rows) {
+  const numCols = profile.columns.filter(c => c.type === 'number');
+  const scored = numCols.map(c => {
+    const nameScore = NAME_PATTERNS.metric.test(c.name) ? 2 : 0;
+    const vals = rows.slice(0, 2000).map(r => toNum(r[c.name])).filter(Number.isFinite);
+    const mean = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+    const varc = vals.length ? vals.reduce((a,b)=>a+(b-mean)*(b-mean),0)/vals.length : 0;
+    return { col: c, score: nameScore + (isFinite(varc) ? Math.log10(1+varc) : 0) };
+  });
+  scored.sort((a,b)=>b.score-a.score);
+  return scored[0]?.col || numCols[0] || null;
+}
+
+function autoPlan(profile, rows) {
+  const roles = profile.columns.map(c => ({ col:c, ...inferRole(c, profile, rows) }));
+  const dims = roles.filter(x => x.role==='dimension').map(x => x.col);
+  const dates = roles.filter(x => x.role==='date').map(x => x.col);
+  const metricsStrong = roles.filter(x => x.role==='metric:strong').map(x => x.col);
+  const metrics = roles.filter(x => x.role==='metric' || x.role==='metric:strong').map(x => x.col);
+
+  const primary = metricsStrong[0] || pickPrimaryMetric(profile, rows);
+  const jobs = []; const charts = [];
+
+  if (dates.length && primary) {
+    jobs.push({ groupBy: dates[0].name, metric: primary.name, agg:'sum', dateBucket:autoBucket(rows, dates[0].name) });
+    charts.push({ useJob: jobs.length-1, preferredType:'line', title:`${primary.name} over ${dates[0].name}` });
+  }
+
+  dims.slice(0,3).forEach(d => {
+    if (primary) {
+      jobs.push({ groupBy:d.name, metric:primary.name, agg:'sum' });
+      charts.push({ useJob: jobs.length-1, preferredType: d.unique<=8 ? 'pie' : 'bar', title:`${primary.name} by ${d.name}` });
+      jobs.push({ groupBy:d.name, metric:primary.name, agg:'avg' });
+      charts.push({ useJob: jobs.length-1, preferredType:'hbar', title:`avg ${primary.name} by ${d.name}` });
+    }
+    jobs.push({ groupBy:d.name, metric:null, agg:'count' });
+    charts.push({ useJob: jobs.length-1, preferredType: d.unique<=8 ? 'pie' : 'bar', title:`count by ${d.name}` });
+  });
+
+  const second = metrics.find(m => m.name !== primary?.name);
+  if (second && dims.length) {
+    jobs.push({ groupBy:dims[0].name, metric:second.name, agg:'sum' });
+    charts.push({ useJob: jobs.length-1, preferredType:'bar', title:`${second.name} by ${dims[0].name}` });
+  }
+
+  return { jobs: jobs.slice(0,10), charts };
+}
+
+function autoBucket(rows, dateCol){
+  const ds = rows.map(r=>+new Date(r[dateCol])).filter(x=>!Number.isNaN(x));
+  if (!ds.length) return '';
+  const spanDays = (Math.max(...ds)-Math.min(...ds))/86400000;
+  if (spanDays > 400) return 'month';
+  if (spanDays > 120) return 'week';
+  return 'day';
+}
+
+/* ========= aggregates ========= */
+function bucketDate(d, bucket){
+  const dt = new Date(d); if (Number.isNaN(+dt)) return null;
+  const y = dt.getFullYear(), m = dt.getMonth()+1, day = dt.getDate();
+  if (bucket==='year') return `${y}`;
+  if (bucket==='quarter') return `${y}-Q${Math.floor((m-1)/3)+1}`;
+  if (bucket==='month') return `${y}-${String(m).padStart(2,'0')}`;
+  if (bucket==='week'){
+    const t = new Date(dt); // ISO week number
+    const dayNum = (t.getDay()+6)%7; t.setDate(t.getDate()-dayNum+3);
+    const firstThursday = new Date(t.getFullYear(),0,4);
+    const week = 1 + Math.round(((t - firstThursday)/86400000 - 3 + ((firstThursday.getDay()+6)%7))/7);
+    return `${t.getFullYear()}-W${String(week).padStart(2,'0')}`;
+  }
+  return `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`; // day
+}
+
+function groupAgg(rows, groupBy, metric, agg, dateBucket=''){
+  const m = new Map();
+  const isDateCol = columnType(groupBy)==='date';
+  for (const r of rows){
+    let g = r[groupBy];
+    if (isDateCol && dateBucket){
+      const b = bucketDate(g, dateBucket);
+      if (b==null) continue;
+      g = b;
+    }
+    if (!m.has(g)) m.set(g, []);
+    if (agg==='count'){ m.get(g).push(1); }
+    else {
+      const v = toNum(r[metric]);
+      if (isFinite(v)) m.get(g).push(v);
+    }
+  }
+  const out = [];
+  for (const [k, arr] of m){
+    if (!arr.length && agg!=='count') continue;
+    let val = 0;
+    if (agg==='sum') val = arr.reduce((a,b)=>a+b,0);
+    else if (agg==='avg') val = arr.reduce((a,b)=>a+b,0)/arr.length;
+    else if (agg==='min') val = Math.min(...arr);
+    else if (agg==='max') val = Math.max(...arr);
+    else if (agg==='count') val = arr.length;
+    else if (agg==='distinct_count') val = new Set(arr).size;
+    out.push([k, val]);
+  }
+  out.sort((a,b)=> (Number(b[1]||0) - Number(a[1]||0)));
+  return { header:[isDateCol && dateBucket ? `${groupBy} (${dateBucket})` : groupBy, `${agg}(${metric||'*'})`], rows: out };
+}
+
+/* ========= charting (FIXED HEIGHT + SAFE REDRAW + MORE TYPES) ========= */
+const chartRegistry = new WeakMap(); // canvas -> { chart, ro }
+function computeChartConfig(agg, typePref, topN){
+  let rows=[...agg.rows];
+  if (typeof topN==='number' && rows.length>topN){
+    const head=rows.slice(0,topN);
+    const other=rows.slice(topN).reduce((a,b)=>a+(+b[1]||0),0);
+    rows=other?[...head,['Other',other]]:head;
+  }
+  const labels=rows.map(r=>String(r[0]));
+  const values=rows.map(r=>Number(r[1])||0);
+
+  let type='bar', indexAxis='x', fill=false;
+  if (typePref==='hbar'){ type='bar'; indexAxis='y'; }
+  else if (typePref==='line'){ type='line'; }
+  else if (typePref==='area'){ type='line'; fill=true; }
+  else if (['pie','doughnut','polarArea','radar'].includes(typePref)){ type=typePref; }
+  else if (typePref==='auto'){ type = (labels.length<=8 ? 'pie' : 'bar'); }
+
+  const isCircular = (type==='pie' || type==='doughnut' || type==='polarArea' || type==='radar');
+
+  return {
+    type,
+    data:{ labels, datasets:[{ label: agg.header[1], data: values, fill, tension:0.25 }] },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      indexAxis,
+      plugins:{
+        legend:{ display: isCircular || labels.length<=20 },
+        tooltip:{ callbacks:{ label: ctx => {
+          const v = ctx.parsed?.y ?? ctx.parsed ?? ctx.raw;
+          return `${ctx.dataset.label}: ${nice(v)}`;
+        }}}
+      },
+      scales: isCircular ? {} : {
+        x:{ ticks:{ autoSkip:true, maxRotation:0 } },
+        y:{ beginAtZero:true, ticks:{ callback:v=>nice(v) } }
+      }
+    }
+  };
+}
+function ensureChart(canvas, cfg){
+  const rec = chartRegistry.get(canvas);
+  if (rec){
+    try{ rec.chart.destroy(); }catch{}
+    if (rec.ro){ try{ rec.ro.disconnect(); }catch{} }
+    chartRegistry.delete(canvas);
+  }
+  const chart = new Chart(canvas.getContext('2d'), cfg);
+  const ro = new ResizeObserver(()=>{ if (chart) chart.resize(); });
+  const parent = canvas.parentElement; if (parent) ro.observe(parent);
+  chartRegistry.set(canvas, { chart, ro });
+  return chart;
+}
+function renderChartCard(agg, chartsContainer, defaultType='auto', defaultTopN=20){
+  const c = document.createElement('div'); c.className='chart-card';
+  const head = document.createElement('div'); head.className='chart-head';
+  const left = document.createElement('div'); left.className='small muted'; left.textContent = `Chart for: ${agg.header[1]} by ${agg.header[0]}`;
+  const right = document.createElement('div'); right.style.display='flex'; right.style.gap='8px'; right.style.flexWrap='wrap';
+  const typeSel = document.createElement('select');
+  typeSel.innerHTML = `
+    <option value="auto">Auto</option>
+    <option value="bar">Bar (vertical)</option>
+    <option value="hbar">Bar (horizontal)</option>
+    <option value="line">Line</option>
+    <option value="area">Area</option>
+    <option value="pie">Pie</option>
+    <option value="doughnut">Doughnut</option>
+    <option value="polarArea">Polar Area</option>
+    <option value="radar">Radar</option>
+  `;
+  typeSel.value = defaultType;
+  const topNInput = document.createElement('input'); topNInput.type='number'; topNInput.min='3'; topNInput.max='999'; topNInput.value=String(defaultTopN);
+  const redrawBtn = document.createElement('button'); redrawBtn.textContent='Redraw';
+  right.append(typeSel, topNInput, redrawBtn);
+  head.append(left, right);
+  c.appendChild(head);
+
+  const box = document.createElement('div'); box.className='chart-box';
+  const canvas = document.createElement('canvas');
+  box.appendChild(canvas);
+  c.appendChild(box);
+  chartsContainer.appendChild(c);
+
+  function draw(){
+    const cfg = computeChartConfig(agg, typeSel.value, Number(topNInput.value)||20);
+    ensureChart(canvas, cfg);
+  }
+  draw(); redrawBtn.onclick = draw;
+
+  return c;
+}
+
+/* ========= aggregate table (sortable + download) ========= */
+function renderAggTable(agg, container, previewN=20){
+  container.innerHTML = '';
+  const table=document.createElement('table');
+  const thead=document.createElement('thead'), trh=document.createElement('tr');
+  agg.header.forEach(h=>{ const th=document.createElement('th'); th.textContent=h; trh.appendChild(th); });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+  const tbody=document.createElement('tbody'); table.appendChild(tbody);
+  container.appendChild(table);
+
+  let showAll=false, sortIdx=1, sortDir='desc';
+  function fill(){
+    tbody.innerHTML='';
+    let rows = [...agg.rows];
+    rows.sort((a,b)=>{
+      const av=a[sortIdx], bv=b[sortIdx];
+      return sortDir==='asc' ? (av-bv) : (bv-av);
+    });
+    rows = showAll ? rows : rows.slice(0, previewN);
+    rows.forEach(r=>{
+      const tr=document.createElement('tr');
+      const td0=document.createElement('td'); td0.textContent=String(r[0]);
+      const td1=document.createElement('td'); td1.textContent=nice(Number(r[1])||0);
+      tr.append(td0,td1); tbody.appendChild(tr);
+    });
+  }
+  fill();
+
+  const foot=document.createElement('div'); foot.className='card-foot';
+  const toggle=document.createElement('button'); toggle.textContent=`Show all (${agg.rows.length})`;
+  const dl=document.createElement('button'); dl.textContent='Download CSV';
+  toggle.onclick=()=>{ showAll=!showAll; fill(); toggle.textContent=showAll?'Collapse':`Show all (${agg.rows.length})`; };
+  dl.onclick=()=>{
+    const csv=[agg.header, ...agg.rows].map(r=>r.map(s=>{
+      const z=String(s??''); return /[",\n]/.test(z)?`"${z.replace(/"/g,'""')}"`:z;
+    }).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download=`${(agg.header[1]+' by '+agg.header[0]).replace(/\s+/g,'_')}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  };
+  foot.append(toggle, dl);
+  container.appendChild(foot);
+}
+
+/* ========= Manual Mode: Role Editor + Add Aggregate ========= */
+function openRoleEditor(){
+  const modal = $('#roleModal'); const tb = $('#roleTBody'); tb.innerHTML='';
+  PROFILE.columns.forEach(c=>{
+    const tr=document.createElement('tr');
+    const roleAuto = inferRole(c, PROFILE, ROWS).role;
+    const current = MANUAL_ROLES[c.name] || roleAuto;
+    tr.innerHTML = `
+      <td>${c.name}</td>
+      <td>${c.type}</td>
+      <td>${c.unique}</td>
+      <td>
+        <select data-col="${c.name}">
+          <option value="dimension">Dimension (Group)</option>
+          <option value="metric">Metric (Number)</option>
+          <option value="date">date</option>
+          <option value="id">ID / Code</option>
+          <option value="ignore">ignore</option>
+        </select>
+      </td>
+      <td class="muted small">${(c.samples||[]).join(' | ')}</td>
+    `;
+    tb.appendChild(tr);
+    tr.querySelector('select').value=current.replace('metric:strong','metric');
+  });
+  modal.classList.add('open');
+}
+$('#closeRoleModal').onclick = ()=> $('#roleModal').classList.remove('open');
+$('#saveRoles').onclick = ()=>{
+  MANUAL_ROLES = {};
+  $('#roleTBody').querySelectorAll('select').forEach(sel=>{
+    MANUAL_ROLES[ sel.getAttribute('data-col') ] = sel.value;
+  });
+  $('#roleModal').classList.remove('open');
+  renderAggregates(); // refresh view using manual roles (if in manual mode)
+};
+
+function planFromManualRoles(profile){
+  const getCols = (role)=> profile.columns.filter(c => (MANUAL_ROLES[c.name]||'')===role);
+  const dims = getCols('dimension');
+  const dates = getCols('date');
+  const metrics = getCols('metric');
+
+  const primary = metrics[0] || pickPrimaryMetric(profile, ROWS);
+  const jobs=[], charts=[];
+
+  if (dates.length && primary){
+    jobs.push({ groupBy: dates[0].name, metric: primary.name, agg:'sum', dateBucket:autoBucket(ROWS, dates[0].name) });
+    charts.push({ useJob: jobs.length-1, preferredType:'line', title:`${primary.name} over ${dates[0].name}` });
+  }
+  dims.slice(0,3).forEach(d=>{
+    if (primary){
+      jobs.push({ groupBy:d.name, metric:primary.name, agg:'sum' });
+      charts.push({ useJob: jobs.length-1, preferredType:d.unique<=8?'pie':'bar', title:`${primary.name} by ${d.name}` });
+      jobs.push({ groupBy:d.name, metric:primary.name, agg:'avg' });
+      charts.push({ useJob: jobs.length-1, preferredType:'hbar', title:`avg ${primary.name} by ${d.name}` });
+    }
+    jobs.push({ groupBy:d.name, metric:null, agg:'count' });
+    charts.push({ useJob: jobs.length-1, preferredType:d.unique<=8?'pie':'bar', title:`count by ${d.name}` });
+  });
+  return { jobs: jobs.slice(0,10), charts };
+}
+
+function openAddAgg(){
+  const modal = $('#aggModal');
+  const gb = $('#aggGroupBy'), mt = $('#aggMetric');
+  const bucket = $('#aggBucket'); gb.innerHTML=''; mt.innerHTML=''; bucket.value='';
+  const dims = MODE==='manual'
+    ? PROFILE.columns.filter(c => (MANUAL_ROLES[c.name]||'')==='dimension' || (MANUAL_ROLES[c.name]||'')==='date')
+    : PROFILE.columns.filter(c => ['string','date'].includes(c.type));
+  const nums = MODE==='manual'
+    ? PROFILE.columns.filter(c => (MANUAL_ROLES[c.name]||'')==='metric')
+    : PROFILE.columns.filter(c => c.type==='number');
+
+  dims.forEach(c=>{ const o=document.createElement('option'); o.value=c.name; o.textContent=c.name; gb.appendChild(o); });
+  nums.forEach(c=>{ const o=document.createElement('option'); o.value=c.name; o.textContent=c.name; mt.appendChild(o); });
+  modal.classList.add('open');
+}
+$('#closeAggModal').onclick = ()=> $('#aggModal').classList.remove('open');
+$('#addAggConfirm').onclick = ()=>{
+  const groupBy = $('#aggGroupBy').value;
+  const metric  = $('#aggMetric').value || null;
+  const agg     = $('#aggFunc').value;
+  const chart   = $('#aggChart').value;
+  const topN    = Math.max(3, Math.min(999, Number($('#aggTopN').value)||20));
+  const dateBucket = $('#aggBucket').value || '';
+  MANUAL_JOBS.push({ groupBy, metric, agg, chart, topN, dateBucket });
+  $('#aggModal').classList.remove('open');
+  renderAggregates();
+};
+
+/* ========= UI glue ========= */
+$('#loadBtn').onclick = async ()=>{
+  const f=$('#file').files[0]; if(!f) return alert('Choose a CSV first.');
+  $('#meta').textContent='Parsing…';
+  try{
+    const choice=$('#delimiter').value, header=$('#hasHeader').checked;
+    const {data, meta}=await parseCSV(f, choice, header);
+    if(!data.length) throw new Error('No rows detected (check delimiter/header).');
+    ROWS=data;
+    PROFILE=profile(ROWS); renderProfile(PROFILE);
+    $('#meta').textContent=`Loaded ${PROFILE.rowCount} rows, ${PROFILE.columns.length} columns. (delimiter="${meta.delimiter}")`;
+    $('#results').innerHTML='';
+
+    DATA_COLUMNS = Object.keys(ROWS[0] || {});
+    buildRawHeader(DATA_COLUMNS);
+    QUERY = ''; $('#searchInput').value='';
+    SORT = { col:null, dir:'asc' };
+    RPP = Number($('#rowsPerPage').value)||25; PAGE=1;
+    applyFilter(); renderRawBody();
+
+    // reset manual state
+    MANUAL_ROLES = {};
+    MANUAL_JOBS = [];
+    $('#mode').value='auto'; switchMode('auto');
+  }catch(e){
+    console.error(e); alert('Parse error: '+(e?.message||e)); $('#meta').textContent='Parse failed.';
+  }
+};
+
+function switchMode(val){
+  MODE = val;
+  const manual = MODE==='manual';
+  $('#editRolesBtn').style.display = manual ? '' : 'none';
+  $('#addAggBtn').style.display   = manual ? '' : 'none';
+  $('#clearManualBtn').style.display = manual ? '' : 'none';
+}
+$('#mode').addEventListener('change', e=>{ switchMode(e.target.value); renderAggregates(); });
+$('#editRolesBtn').onclick = openRoleEditor;
+$('#addAggBtn').onclick = openAddAgg;
+$('#clearManualBtn').onclick = ()=>{ MANUAL_ROLES={}; MANUAL_JOBS=[]; renderAggregates(); };
+
+$('#searchInput').addEventListener('input', onSearch);
+$('#rowsPerPage').addEventListener('change', ()=>{
+  RPP = Number($('#rowsPerPage').value)||25; PAGE=1; renderRawBody();
+});
+$('#prevPage').addEventListener('click', ()=>{ if(PAGE>1){ PAGE--; renderRawBody(); } });
+$('#nextPage').addEventListener('click', ()=>{ const pages=Math.max(1, Math.ceil(FILTERED_ROWS.length / RPP)); if(PAGE<pages){ PAGE++; renderRawBody(); } });
+$('#downloadFiltered').addEventListener('click', ()=>{
+  if (!FILTERED_ROWS?.length) return;
+  const esc = s => { const str = String(s ?? ''); return /[",\n]/.test(str) ? `"${str.replace(/"/g,'""')}"` : str; };
+  const header = DATA_COLUMNS.map(esc).join(',');
+  const sorted = sortRows(FILTERED_ROWS);
+  const body = sorted.map(r => DATA_COLUMNS.map(c => esc(r[c])).join(',')).join('\n');
+  const blob = new Blob([header+'\n'+body], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'filtered_rows.csv'; a.click(); URL.revokeObjectURL(a.href);
+});
+
+$('#autoBtn').onclick = renderAggregates;
+
+function renderAggregates(){
+  if(!ROWS) return alert('Load a CSV first.');
+  let plan;
+  if (MODE==='manual'){
+    if (MANUAL_JOBS.length){
+      plan = { jobs: MANUAL_JOBS.slice(0,10), charts:[] };
+    } else if (Object.keys(MANUAL_ROLES).length){
+      plan = planFromManualRoles(PROFILE);
+    } else {
+      plan = autoPlan(PROFILE, ROWS);
+    }
+  } else {
+    plan = autoPlan(PROFILE, ROWS);
+  }
+
+  const grid=$('#results'); grid.innerHTML='';
+  const aggregates = plan.jobs.map(j => groupAgg(ROWS, j.groupBy, j.metric, j.agg, j.dateBucket||''));
+
+  aggregates.forEach((agg, idx)=>{
+    const intent = plan.charts.find(c=>c.useJob===idx) || {};
+    const cfg = plan.jobs[idx] || {};
+    const title = intent.title || `${agg.header[1]} by ${agg.header[0]}`;
+
+    const card=document.createElement('div'); card.className='card';
+
+    const head=document.createElement('div'); head.className='card-head';
+    const left=document.createElement('div');
+    const h=document.createElement('h4'); h.className='card-title'; h.textContent=title;
+    const sub=document.createElement('div'); sub.className='card-sub'; sub.textContent=`${agg.rows.length} groups · ${agg.header[1]}`;
+    left.append(h, sub); head.append(left); card.appendChild(head);
+
+    const controls=document.createElement('div'); controls.className='card-controls';
+    const addChartBtn=document.createElement('button'); addChartBtn.textContent='Add Chart Card';
+    const typeSel=document.createElement('select');
+    typeSel.innerHTML=`
+      <option value="auto">Auto</option>
+      <option value="bar">Bar (vertical)</option>
+      <option value="hbar">Bar (horizontal)</option>
+      <option value="line">Line</option>
+      <option value="area">Area</option>
+      <option value="pie">Pie</option>
+      <option value="doughnut">Doughnut</option>
+      <option value="polarArea">Polar Area</option>
+      <option value="radar">Radar</option>`;
+    typeSel.value = intent.preferredType || cfg.chart || 'auto';
+    const topNInput=document.createElement('input'); topNInput.type='number'; topNInput.min='3'; topNInput.max='999'; topNInput.value=String(cfg.topN||20);
+    const hint=document.createElement('span'); hint.className='muted small'; hint.textContent='Type / Top-N for new chart';
+    controls.append(hint, typeSel, topNInput, addChartBtn);
+    card.appendChild(controls);
+
+    const chartsContainer=document.createElement('div'); chartsContainer.className='chart-cards';
+    card.appendChild(chartsContainer);
+    renderChartCard(agg, chartsContainer, typeSel.value, Number(topNInput.value)||20);
+    addChartBtn.onclick = ()=>{
+      const t = typeSel.value;
+      const n = Math.max(3, Math.min(999, Number(topNInput.value)||20));
+      renderChartCard(agg, chartsContainer, t, n);
+    };
+
+    const tableBox=document.createElement('div'); tableBox.className='table-wrap';
+    card.appendChild(tableBox);
+    renderAggTable(agg, tableBox, 20);
+
+    grid.appendChild(card);
+  });
+}
+</script>
+</body>
+</html>
